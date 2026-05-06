@@ -4,7 +4,6 @@ import ssl
 HOST = "0.0.0.0"
 PORT = 8443
 
-# сертифікат і ключ сервера та ca_cert поки лише теоретично
 SERVER_CERT = "server.pem"
 SERVER_KEY = "server.key"
 CA_CERT = "rootCA.pem"
@@ -13,7 +12,9 @@ context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 context.load_cert_chain(certfile=SERVER_CERT, keyfile=SERVER_KEY)
 context.load_verify_locations(cafile=CA_CERT)
 context.verify_mode = ssl.CERT_REQUIRED
+
 context.minimum_version = ssl.TLSVersion.TLSv1_2
+# context.maximum_version = ssl.TLSVersion.TLSv1_2
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0) as sock:
     sock.bind((HOST, PORT))

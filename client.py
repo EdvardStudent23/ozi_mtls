@@ -13,7 +13,10 @@ context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=CA_CERT)
 context.load_cert_chain(certfile=CLIENT_CERT, keyfile=CLIENT_KEY)
 
 context.check_hostname = False
+
 context.minimum_version = ssl.TLSVersion.TLSv1_2
+# context.maximum_version = ssl.TLSVersion.TLSv1_2
+
 
 with socket.create_connection((HOST, PORT)) as sock:
     with context.wrap_socket(sock, server_hostname=HOST) as ssock:
