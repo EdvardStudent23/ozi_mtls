@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PKI artifacts (NEVER commit private keys)
+pki/*.key
+pki/*.csr
+pki/*.srl
+pki/*.ext
+# leave the public certs and the gen script tracked
+!pki/gen_pki.sh
+
+# Test scratch
+tests/_tmp/
+
+# Wireshark / tshark captures (often large, may contain real traffic)
+captures/*.pcap
+captures/*.pcapng
+# but keep the small synthetic demo captures used in the report
+!captures/mtls_tls13.pcapng
+!captures/mtls_tls12.pcapng
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
