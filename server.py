@@ -1,65 +1,85 @@
+"""mTLS server: accept TLS connections that present a client cert signed by our CA."""
+import argparse
+import logging
+import os
 import socket
 import ssl
+import sys
 from pathlib import Path
 
-HOST = "0.0.0.0"
-PORT = 8443
-
-PKI = Path(__file__).parent / "pki"
-SERVER_CERT = str(PKI / "server.pem")
-SERVER_KEY = str(PKI / "server.key")
-CA_CERT = str(PKI / "rootCA.pem")
-
-context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-context.load_cert_chain(certfile=SERVER_CERT, keyfile=SERVER_KEY)
-context.load_verify_locations(cafile=CA_CERT)
-context.verify_mode = ssl.CERT_REQUIRED
-context.minimum_version = ssl.TLSVersion.TLSv1_2
+log = logging.getLogger("mtls.server")
 
 
-def _name(rdn_seq):
-    return dict(x[0] for x in rdn_seq) if rdn_seq else {}
+def make_context(cert: Path, key: Path, ca: Path, tls_version: str) -> ssl.SSLContext:
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(certfile=str(cert), keyfile=str(key))
+    ctx.load_verify_locations(cafile=str(ca))
+    ctx.verify_mode = ssl.CERT_REQUIRED
+
+    if tls_version == "1.3":
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+    else:
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+
+    keylog = os.environ.get("SSLKEYLOGFILE")
+    if keylog:
+        ctx.keylog_filename = keylog
+        log.info("SSLKEYLOGFILE -> %s", keylog)
+    return ctx
 
 
-def handle(raw_conn, addr):
-    try:
-        conn = context.wrap_socket(raw_conn, server_side=True)
-    except ssl.SSLError as e:
-        print(f"[!] TLS handshake failed from {addr}: {e}")
-        raw_conn.close()
-        return
+def handle_client(ssock: ssl.SSLSocket, addr) -> None:
+    cert: dict = ssock.getpeercert() or {}  # type: ignore[assignment]
+    subj = dict(rdn[0] for rdn in cert.get("subject", ()))
+    issuer = dict(rdn[0] for rdn in cert.get("issuer", ()))
+    log.info("client connected: addr=%s subject=%s issuer=%s notAfter=%s",
+             addr, subj.get("commonName"), issuer.get("commonName"), cert.get("notAfter"))
+    log.info("cipher=%s tls=%s", ssock.cipher(), ssock.version())
 
-    try:
-        cert = conn.getpeercert() or {}
-        subj = _name(cert.get("subject"))
-        issuer = _name(cert.get("issuer"))
-        print(f"[+] connected: {addr}")
-        print(f"    client CN: {subj.get('commonName')}")
-        print(f"    issuer CN: {issuer.get('commonName')}")
-        print(f"    cipher:    {conn.cipher()}")
-        data = conn.recv(4096)
-        print(f"    payload:   {data.decode(errors='replace')!r}")
-        conn.sendall(b"ACK: secure message received")
-    except (ssl.SSLError, OSError) as e:
-        print(f"[!] connection error from {addr}: {e}")
-    finally:
-        try:
-            conn.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        conn.close()
+    data = ssock.recv(4096)
+    log.info("received: %r", data)
+    ssock.sendall(b"ACK: secure message received\n")
 
 
-def main():
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8443)
+    parser.add_argument("--cert", type=Path, default=Path("pki/server.pem"))
+    parser.add_argument("--key", type=Path, default=Path("pki/server.key"))
+    parser.add_argument("--ca", type=Path, default=Path("pki/rootCA.pem"))
+    parser.add_argument("--tls", choices=["1.2", "1.3"], default="1.3")
+    parser.add_argument("--log", default="INFO")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=args.log,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+    ctx = make_context(args.cert, args.key, args.ca, args.tls)
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((HOST, PORT))
+        sock.bind((args.host, args.port))
         sock.listen(5)
-        print(f"[+] mTLS server listening on {HOST}:{PORT}")
+        log.info("listening on %s:%d (TLS %s)", args.host, args.port, args.tls)
+
         while True:
-            raw_conn, addr = sock.accept()
-            handle(raw_conn, addr)
+            client_sock, addr = sock.accept()
+            try:
+                ssock = ctx.wrap_socket(client_sock, server_side=True)
+                try:
+                    handle_client(ssock, addr)
+                finally:
+                    ssock.close()
+            except ssl.SSLError as e:
+                log.warning("TLS handshake failed from %s: %s", addr, e)
+            except Exception as e:
+                log.error("unexpected error from %s: %s", addr, e)
+            finally:
+                client_sock.close()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

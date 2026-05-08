@@ -69,3 +69,12 @@ ls -la rootCA.pem server.pem client.pem
 echo
 echo "Inspect:"
 echo "  openssl x509 -in $PKI_DIR/server.pem -noout -text | grep -A1 'Subject Alternative\\|Key Usage'"
+
+# ssh keys
+echo "==> ssh keys"
+rm -f ssh_host_ed25519_key{,.pub} ssh_client_ed25519_key{,.pub} ssh_authorized_keys
+ssh-keygen -t ed25519 -f ssh_host_ed25519_key -N "" -C "ozi-mtls SSH host" -q
+ssh-keygen -t ed25519 -f ssh_client_ed25519_key -N "" -C "ozi-mtls SSH client" -q
+cp ssh_client_ed25519_key.pub ssh_authorized_keys
+chmod 600 ssh_host_ed25519_key ssh_client_ed25519_key
+echo "==> ssh keys done"
